@@ -1,0 +1,50 @@
+function getTasks($path) {
+    $out = @()
+
+    # Get root tasks
+    $schedule.GetFolder($path).GetTasks(0) | Where-Object {$_.Path -notlike '*Microsoft*'} | % {
+        $xml = [xml]$_.xml
+        $out += New-Object psobject -Property @{
+            "Name" = $_.Name
+            "Path" = $_.Path
+            "Author" = ($xml.Task.RegistrationInfo | % { "$($_.Author)" }) -join "`n"
+            "Description" = ($xml.Task.RegistrationInfo | % { "$($_.Description)" }) -join "`n"
+            "StartBoundary" = ($xml.Task.Triggers.CalendarTrigger | % { "$($_.StartBoundary)" }) -join "`n"
+            "Interval" = ($xml.Task.Triggers.CalendarTrigger.Repetition | % { "$($_.Interval)" }) -join "`n"
+            "DaysInterval" = ($xml.Task.Triggers.CalendarTrigger.ScheduleByDay | % { "$($_.DaysInterval)" }) -join "`n"
+            "Creator" = $_.Creator
+            "LastRunTime" = $_.LastRunTime
+            "NextRunTime" = $_.NextRunTime
+            "Actions" = ($xml.Task.Actions.Exec | % { "$($_.Command) $($_.Arguments)" }) -join "`n"
+            "Enabled" = ($xml.Task.Triggers.CalendarTrigger | % { "$($_.Enabled)" }) -join "`n"
+            
+        }
+    }
+
+    # Get tasks from subfolders
+    $schedule.GetFolder($path).GetFolders(0) | % {
+        $out += getTasks($_.Path)
+    }
+
+    #Output
+    $out 
+}
+
+  
+$tasks = @()
+
+$schedule = New-Object -ComObject "Schedule.Service"
+$schedule.Connect() 
+
+# Start inventory
+$tasks += getTasks("\")
+
+# Close com
+[System.Runtime.Interopservices.Marshal]::ReleaseComObject($schedule) | Out-Null
+Remove-Variable schedule
+
+$HostName = get-content env:computername
+$csvPath = "{0}-TaskInventory.csv" -f $HostName
+
+# Output all tasks
+$tasks |  Select-Object -Property @{Name='Server';Expression={$env:COMPUTERNAME}}, Name, Description, Creator, Author,StartBoundary,DaysInterval,Interval, Path, Actions,Enabled  | Export-Csv -path c:\$csvPath -NoTypeInformation
